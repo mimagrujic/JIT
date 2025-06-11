@@ -167,6 +167,11 @@ void jitStatus() {
     for (auto &[filename, data] : indexJSON[currHead].items()) {
         stagedFiles[filename].first = data["hash"];
         stagedFiles[filename].second = data["mtime"];
+        if (!filesystem::exists(filename)) {
+            cout << "DELETED: " << filename << "\n";
+            indexJSON[currHead].erase(filename);
+            isStaged = true;
+        }
     }
     for (auto i = filesystem::recursive_directory_iterator("."); i != filesystem::recursive_directory_iterator(); i++) {
         if (i->path().filename() == ".jit" || i->path().filename() == "a.exe")
@@ -194,9 +199,13 @@ void jitStatus() {
             }
         }
     }
-    indexIN.close();
     if (!isStaged)
         cout << "Nothing to commit, working tree clean.\n";
+
+    ofstream indexOUT(".jit/index.json");
+    indexOUT << indexJSON.dump(4);
+    indexIN.close();
+    indexOUT.close();
 }
 
 string getHead() {
