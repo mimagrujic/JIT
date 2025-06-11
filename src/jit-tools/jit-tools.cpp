@@ -163,22 +163,26 @@ void jitStatus() {
     ifstream indexIN(".jit/index.json");
     indexIN >> indexJSON;
     bool isStaged = false;
-    unordered_map<string, pair<string, string>> stagedFiles;
-    for (auto &[filename, data] : indexJSON[currHead].items()) {
-        stagedFiles[filename].first = data["hash"];
-        stagedFiles[filename].second = data["mtime"];
+    unordered_map<string, pair<string, string>> stagedDataMap;
+    auto &branchFiles = indexJSON[currHead];
+    for (auto it = branchFiles.begin(); it != branchFiles.end();) {
+        string filename = it.key();
+        auto &data = it.value();
+        stagedDataMap[filename].first = data["hash"];
+        stagedDataMap[filename].second = data["mtime"];
         if (!filesystem::exists(filename)) {
             cout << "DELETED: " << filename << "\n";
-            indexJSON[currHead].erase(filename);
+            it = branchFiles.erase(it);
             isStaged = true;
-        }
+        } else
+            it++;
     }
     for (auto i = filesystem::recursive_directory_iterator("."); i != filesystem::recursive_directory_iterator(); i++) {
         if (i->path().filename() == ".jit" || i->path().filename() == "a.exe")
             i.disable_recursion_pending();
         else {
             string filename = i->path().filename().string();
-            if (stagedFiles.find(filename) != stagedFiles.end()) {
+            if (stagedDataMap.find(filename) != stagedDataMap.end()) {
                 stringstream fileDataBuffer;
                 ifstream dataIN(filename);
                 fileDataBuffer << dataIN.rdbuf();
@@ -188,11 +192,10 @@ void jitStatus() {
                 string hashedStr = to_string(hash(fileDataBuffer.str()));
                 string mtime = getLastModifiedTime(filename);
 
-                if (hashedStr != stagedFiles[filename].first) {
+                if (hashedStr != stagedDataMap[filename].first) {
                     cout << "UNSTAGED: " << filename << "\n";
                     isStaged = true;
                 }
-
             } else {
                 cout << "UNSTAGED: " << filename << "\n";
                 isStaged = true;
