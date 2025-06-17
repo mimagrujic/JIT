@@ -29,6 +29,10 @@ void showHelpDocumentation() {
     << "\tjit delete -b <name>\n"
      << "create + switch to branch:\n"
      << "\tjit goto new <name>\n"
+    << "\tcheck the object type:\n"
+     << "jit cat-file -t <hash>\n"
+    << "\tcheck the object's content:\n"
+    << "jit cat-file -p <hash>\n"
      << "unstaged changes:\n"
      << "\tjit status\n"
      << "merge:\n"
@@ -61,6 +65,8 @@ void commandHandling(const vector<string> &commandArgs, string &pathToJitRepo) {
             deleteBranch(pathToJitRepo, commandArgs[3]);
         if (commandArgs[1] == "status")
             jitStatus();
+        if (commandArgs[1] == "commit")
+            commit(commandArgs[2]);
     }
 
 }
@@ -95,19 +101,27 @@ string initializeRepository(const vector<string> &commandArgs) {
     return (commandArgs[2] + "/");
 }
 
-string getLastModifiedTime(const string& fileName) {
-    struct stat fileStat;
+vector<unsigned char> zlibCompress(const string &data) {
+    uLong srcLen = data.size();
+    uLong destLen = compressBound(srcLen);
+    vector<unsigned char> compressed(destLen);
 
-    if (stat(fileName.c_str(), &fileStat) == 0) {
-        time_t mtime = fileStat.st_mtime;
-
-        char buffer[20];
-        strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", std::localtime(&mtime));
-
-        return string(buffer);
-    } else {
-        return "Error: File not found!";
+    if (compress(compressed.data(), &destLen, reinterpret_cast<const Bytef*>(data.c_str()), srcLen) != Z_OK) {
+        throw runtime_error("Zlib compression failed");
     }
+
+    compressed.resize(destLen);
+    return compressed;
+}
+
+string decompressZlib(const vector<unsigned char> &compressed) {
+    uLongf decompressedSize = 100000;
+    vector<unsigned char> buffer(decompressedSize);
+
+    if (uncompress(buffer.data(), &decompressedSize, compressed.data(), compressed.size()) != Z_OK)
+        throw runtime_error("Zlib decompression failed.\n");
+
+    return string(reinterpret_cast<char*>(buffer.data()), decompressedSize);
 }
 
 void stageAllChanges() {
@@ -116,14 +130,7 @@ void stageAllChanges() {
             i.disable_recursion_pending();
         else {
             string fileName = i->path().filename().string();
-            fstream head;
-            head.open( ".jit/head", fstream::in);
-            stringstream headRefBuffer;
-            headRefBuffer << head.rdbuf();
-            string refToHead = headRefBuffer.str();
-            int lastSlash = refToHead.rfind('/');
-            string currHead = refToHead.substr(lastSlash + 1);
-            currHead.erase(currHead.find_last_not_of(" \n\r\t") + 1);
+            string currHead = getHead();
 
             ifstream indexIN(".jit/index.json");
             indexIN >> indexJSON;
@@ -135,22 +142,39 @@ void stageAllChanges() {
             hash<string> hash;
 
             if (indexJSON[currHead].contains(fileName)) {
-                string mtime = getLastModifiedTime(fileName);
-                string hashedStr = to_string(hash(fileDataBuffer.str()));
-                if (indexJSON[currHead][fileName] != mtime
-                    && indexJSON[currHead][fileName]["hash"] != hashedStr) {
-                    indexJSON[currHead][fileName]["mtime"] = mtime;
-                    indexJSON[currHead][fileName]["hash"] = hashedStr;
+                if (!filesystem::is_directory(fileName)) {
+                    string hashedString = to_string(hash("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str()));
+                    if (hashedString != indexJSON[currHead][fileName]) {
+                        vector<unsigned char> compressed = zlibCompress("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str());
+                        string dir = hashedString.substr(0, 2);
+                        string blobName = hashedString.substr(2);
+                        if (!filesystem::exists(".jit/objects/" + dir))
+                            filesystem::create_directory(".jit/objects/" + dir);
+                        ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
+                        blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
+                        blobFile.close();
+
+                        indexJSON[currHead][fileName] = hashedString;
+                    }
                 }
             } else {
-                indexJSON[currHead][fileName] = json::object();
-                indexJSON[currHead][fileName]["mtime"] = getLastModifiedTime(fileName);
-                indexJSON[currHead][fileName]["hash"] = to_string(hash(fileDataBuffer.str()));
+                if (!filesystem::is_directory(fileName)) {
+                    string hashedString = to_string(hash("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str()));
+                    vector<unsigned char> compressed = zlibCompress("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str());
+                    string dir = hashedString.substr(0, 2);
+                    string blobName = hashedString.substr(2);
+                    filesystem::create_directory(".jit/objects/" + dir);
+                    ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
+                    blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
+                    blobFile.close();
+
+                    indexJSON[currHead][fileName] = hashedString;
+                }
             }
+
             ofstream indexOUT(".jit/index.json");
             indexOUT << indexJSON.dump(4);
 
-            head.close();
             indexIN.close();
             indexOUT.close();
             dataIN.close();
@@ -163,13 +187,12 @@ void jitStatus() {
     ifstream indexIN(".jit/index.json");
     indexIN >> indexJSON;
     bool isStaged = false;
-    unordered_map<string, pair<string, string>> stagedDataMap;
+    unordered_map<string, string> stagedDataMap;
     auto &branchFiles = indexJSON[currHead];
     for (auto it = branchFiles.begin(); it != branchFiles.end();) {
         string filename = it.key();
-        auto &data = it.value();
-        stagedDataMap[filename].first = data["hash"];
-        stagedDataMap[filename].second = data["mtime"];
+        auto &hash = it.value();
+        stagedDataMap[filename] = hash;
         if (!filesystem::exists(filename)) {
             cout << "DELETED: " << filename << "\n";
             it = branchFiles.erase(it);
@@ -189,15 +212,14 @@ void jitStatus() {
                 dataIN.close();
                 hash<string> hash;
 
-                string hashedStr = to_string(hash(fileDataBuffer.str()));
-                string mtime = getLastModifiedTime(filename);
+                string hashedStr = to_string(hash("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str()));
 
-                if (hashedStr != stagedDataMap[filename].first) {
-                    cout << "UNSTAGED: " << filename << "\n";
+                if (hashedStr != stagedDataMap[filename]) {
+                    cout << "MODIFIED:    " << i->path() << "\n";
                     isStaged = true;
                 }
             } else {
-                cout << "UNSTAGED: " << filename << "\n";
+                cout << "MODIFIED:    " << i->path() << "\n";
                 isStaged = true;
             }
         }
@@ -209,6 +231,10 @@ void jitStatus() {
     indexOUT << indexJSON.dump(4);
     indexIN.close();
     indexOUT.close();
+}
+
+void commit(string message) {
+
 }
 
 string getHead() {
