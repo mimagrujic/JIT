@@ -32,5 +32,7 @@ string getHead();
 void commit(string message);
 vector<unsigned char> zlibCompress(const string &data);
 string decompressZlib(const vector<unsigned char> &compressed);
+void readObject(string option, string hash);
+string createABlob(string currHead, string fileName);
 
 #endif //JIT_TOOLS_H

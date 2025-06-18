@@ -67,8 +67,9 @@ void commandHandling(const vector<string> &commandArgs, string &pathToJitRepo) {
             jitStatus();
         if (commandArgs[1] == "commit")
             commit(commandArgs[2]);
+        if (commandArgs[1] == "cat-file" && (commandArgs[2] == "-t" || commandArgs[2] == "-p"))
+            readObject(commandArgs[2], commandArgs[3]);
     }
-
 }
 
 string initializeRepository(const vector<string> &commandArgs) {
@@ -123,63 +124,72 @@ string decompressZlib(const vector<unsigned char> &compressed) {
 
     return string(reinterpret_cast<char*>(buffer.data()), decompressedSize);
 }
+string createABlob(string currHead, string fileName) {
+    hash<string> hash;
+    stringstream fileDataBuffer;
+    ifstream dataIN(fileName);
+    fileDataBuffer << dataIN.rdbuf();
+    string blobString = "";
+
+    if (indexJSON[currHead].contains(fileName)) {
+        blobString = "blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str();
+        string hashedString = to_string(hash(blobString));
+        if (hashedString != indexJSON[currHead][fileName]) {
+            vector<unsigned char> compressed = zlibCompress(blobString);
+            string dir = hashedString.substr(0, 2);
+            string blobName = hashedString.substr(2);
+            if (!filesystem::exists(".jit/objects/" + dir))
+                filesystem::create_directory(".jit/objects/" + dir);
+            ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
+            blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
+            blobFile.close();
+
+            indexJSON[currHead][fileName] = hashedString;
+            cout << "ADDED:    " << fileName << "\n";
+        }
+    } else {
+        blobString = "blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str();
+        string hashedString = to_string(hash(blobString));
+        vector<unsigned char> compressed = zlibCompress(blobString);
+        string dir = hashedString.substr(0, 2);
+        string blobName = hashedString.substr(2);
+        filesystem::create_directory(".jit/objects/" + dir);
+        ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
+        blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
+        blobFile.close();
+
+        indexJSON[currHead][fileName] = hashedString;
+        cout << "ADDED:    " << fileName << "\n";
+    }
+
+    dataIN.close();
+    return blobString;
+}
 
 void stageAllChanges() {
+    ifstream indexIN(".jit/index.json");
+    indexIN >> indexJSON;
+
+    string currHead = getHead();
+
     for (auto i = filesystem::recursive_directory_iterator("."); i != filesystem::recursive_directory_iterator(); i++) {
-        if (i->path().filename() == ".jit" || i->path().filename() == "a.exe")
+        if (i->path().filename() == ".jit" || i->path().filename() == "a.exe") {
             i.disable_recursion_pending();
-        else {
+        } else {
             string fileName = i->path().filename().string();
-            string currHead = getHead();
-
-            ifstream indexIN(".jit/index.json");
-            indexIN >> indexJSON;
-
-            stringstream fileDataBuffer;
-            ifstream dataIN(fileName);
-            fileDataBuffer << dataIN.rdbuf();
-
-            hash<string> hash;
-
-            if (indexJSON[currHead].contains(fileName)) {
-                if (!filesystem::is_directory(fileName)) {
-                    string hashedString = to_string(hash("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str()));
-                    if (hashedString != indexJSON[currHead][fileName]) {
-                        vector<unsigned char> compressed = zlibCompress("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str());
-                        string dir = hashedString.substr(0, 2);
-                        string blobName = hashedString.substr(2);
-                        if (!filesystem::exists(".jit/objects/" + dir))
-                            filesystem::create_directory(".jit/objects/" + dir);
-                        ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
-                        blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
-                        blobFile.close();
-
-                        indexJSON[currHead][fileName] = hashedString;
-                    }
-                }
-            } else {
-                if (!filesystem::is_directory(fileName)) {
-                    string hashedString = to_string(hash("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str()));
-                    vector<unsigned char> compressed = zlibCompress("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str());
-                    string dir = hashedString.substr(0, 2);
-                    string blobName = hashedString.substr(2);
-                    filesystem::create_directory(".jit/objects/" + dir);
-                    ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
-                    blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
-                    blobFile.close();
-
-                    indexJSON[currHead][fileName] = hashedString;
-                }
+            string path = i->path().string();
+            if (!filesystem::is_directory(fileName)) {
+                createABlob(currHead, path);
             }
-
-            ofstream indexOUT(".jit/index.json");
-            indexOUT << indexJSON.dump(4);
-
-            indexIN.close();
-            indexOUT.close();
-            dataIN.close();
         }
+
     }
+
+    ofstream indexOUT(".jit/index.json");
+    indexOUT << indexJSON.dump(4);
+
+    indexIN.close();
+    indexOUT.close();
 }
 
 void jitStatus() {
@@ -204,23 +214,25 @@ void jitStatus() {
         if (i->path().filename() == ".jit" || i->path().filename() == "a.exe")
             i.disable_recursion_pending();
         else {
-            string filename = i->path().filename().string();
-            if (stagedDataMap.find(filename) != stagedDataMap.end()) {
-                stringstream fileDataBuffer;
-                ifstream dataIN(filename);
-                fileDataBuffer << dataIN.rdbuf();
-                dataIN.close();
-                hash<string> hash;
+            string filename = i->path().string();
+            if (!filesystem::is_directory(filename)) {
+                if (stagedDataMap.find(filename) != stagedDataMap.end()) {
+                    stringstream fileDataBuffer;
+                    ifstream dataIN(filename);
+                    fileDataBuffer << dataIN.rdbuf();
+                    dataIN.close();
+                    hash<string> hash;
 
-                string hashedStr = to_string(hash("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str()));
+                    string hashedStr = to_string(hash("blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str()));
 
-                if (hashedStr != stagedDataMap[filename]) {
+                    if (hashedStr != stagedDataMap[filename]) {
+                        cout << "MODIFIED:    " << i->path() << "\n";
+                        isStaged = true;
+                    }
+                } else {
                     cout << "MODIFIED:    " << i->path() << "\n";
                     isStaged = true;
                 }
-            } else {
-                cout << "MODIFIED:    " << i->path() << "\n";
-                isStaged = true;
             }
         }
     }
@@ -231,6 +243,23 @@ void jitStatus() {
     indexOUT << indexJSON.dump(4);
     indexIN.close();
     indexOUT.close();
+}
+
+void readObject(string option, string hash) {
+    string dirName = hash.substr(0, 2);
+    string objectFileName = hash.substr(2);
+    ifstream objectStream(".jit/objects/" + dirName + "/" + objectFileName, ios::binary);
+    vector<unsigned char> compressed((istreambuf_iterator<char>(objectStream)),istreambuf_iterator<char>());
+    objectStream.close();
+    string decompressed = decompressZlib(compressed);
+
+    if (option == "-t") {
+        int fstSpace = decompressed.find(" ");
+        cout << decompressed.substr(0, fstSpace) << "\n";
+    } else {
+        int nul = decompressed.find('\0');
+        cout << decompressed.substr(nul + 1) << "\n";
+    }
 }
 
 void commit(string message) {
