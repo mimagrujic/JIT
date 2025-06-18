@@ -65,8 +65,14 @@ void commandHandling(const vector<string> &commandArgs, string &pathToJitRepo) {
             deleteBranch(pathToJitRepo, commandArgs[3]);
         if (commandArgs[1] == "status")
             jitStatus();
-        if (commandArgs[1] == "commit")
-            commit(commandArgs[2]);
+        if (commandArgs[1] == "commit") {
+            string message = "";
+            int numOfWords = commandArgs.size();
+            for (int i = 2; i < numOfWords; i++) {
+                message += commandArgs[i] + " ";
+            }
+            commit(message);
+        }
         if (commandArgs[1] == "cat-file" && (commandArgs[2] == "-t" || commandArgs[2] == "-p"))
             readObject(commandArgs[2], commandArgs[3]);
         if (commandArgs[1] == "log")
@@ -193,7 +199,6 @@ void stageAllChanges() {
         }
 
     }
-
     ofstream indexOUT(".jit/index.json");
     indexOUT << indexJSON.dump(4);
 
@@ -317,6 +322,12 @@ string createCommit(string lastCommitHash, string rootTreeHash, string message) 
     GetUserName(username, &username_len);
     string user = username;
     commitString += "author\t\t" + user + "\n";
+    auto t = time(nullptr);
+    auto tm = *localtime(&t);
+    stringstream ss;
+    ss << put_time(&tm, "%d-%m-%Y, %H:%M:%S");
+    string time = ss.str();
+    commitString += "time\t\t" + time + "\n";
     commitString += "\n" + message + "\n";
 
     int len = commitString.size();
