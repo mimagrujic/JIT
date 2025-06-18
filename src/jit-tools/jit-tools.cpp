@@ -69,6 +69,8 @@ void commandHandling(const vector<string> &commandArgs, string &pathToJitRepo) {
             commit(commandArgs[2]);
         if (commandArgs[1] == "cat-file" && (commandArgs[2] == "-t" || commandArgs[2] == "-p"))
             readObject(commandArgs[2], commandArgs[3]);
+        if (commandArgs[1] == "log")
+            showLog();
     }
 }
 
@@ -129,7 +131,10 @@ string createABlob(string currHead, string fileName) {
     stringstream fileDataBuffer;
     ifstream dataIN(fileName);
     fileDataBuffer << dataIN.rdbuf();
+    dataIN.close();
     string blobString = "";
+    string name = fileName.substr(fileName.rfind("\\") + 1);
+    string res;
 
     if (indexJSON[currHead].contains(fileName)) {
         blobString = "blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str();
@@ -146,6 +151,10 @@ string createABlob(string currHead, string fileName) {
 
             indexJSON[currHead][fileName] = hashedString;
             cout << "ADDED:    " << fileName << "\n";
+            res = "blob\t\t" + hashedString + "\t\t" + name + "\n";
+        } else {
+            res = "blob\t\t" + hashedString + "\t\t" + name + "\n";
+            return res;
         }
     } else {
         blobString = "blob " + to_string(fileDataBuffer.str().length()) + '\0' + fileDataBuffer.str();
@@ -160,10 +169,10 @@ string createABlob(string currHead, string fileName) {
 
         indexJSON[currHead][fileName] = hashedString;
         cout << "ADDED:    " << fileName << "\n";
+        res = "blob\t\t" + hashedString + "\t\t" + name + "\n";
     }
 
-    dataIN.close();
-    return blobString;
+    return res;
 }
 
 void stageAllChanges() {
@@ -245,25 +254,125 @@ void jitStatus() {
     indexOUT.close();
 }
 
-void readObject(string option, string hash) {
+string readObject(string option, string hash) {
     string dirName = hash.substr(0, 2);
     string objectFileName = hash.substr(2);
+    string resString;
     ifstream objectStream(".jit/objects/" + dirName + "/" + objectFileName, ios::binary);
     vector<unsigned char> compressed((istreambuf_iterator<char>(objectStream)),istreambuf_iterator<char>());
     objectStream.close();
     string decompressed = decompressZlib(compressed);
-
     if (option == "-t") {
         int fstSpace = decompressed.find(" ");
-        cout << decompressed.substr(0, fstSpace) << "\n";
+        resString = decompressed.substr(0, fstSpace);
+        cout << resString << "\n";
     } else {
         int nul = decompressed.find('\0');
-        cout << decompressed.substr(nul + 1) << "\n";
+        resString = decompressed.substr(nul + 1);
+        cout << resString << "\n";
     }
+
+    return resString;
+}
+
+string createTree(string directory) {
+    string head = getHead();
+    string treeContent = "";
+    for (auto &i : filesystem::directory_iterator(directory)) {
+        if (i.path().filename() == ".jit" || i.path().filename() == "a.exe")
+            continue;
+        string path = i.path().string();
+        if (!filesystem::is_directory(path)) {
+            treeContent += createABlob(head, path);
+        } else {
+            treeContent += createTree(path);
+        }
+    }
+    hash<string> hash;
+    string treeFileContent = "tree " + to_string(treeContent.size()) + '\0' + treeContent;
+    string hashedString = to_string(hash(treeFileContent));
+    vector<unsigned char> compressed = zlibCompress(treeFileContent);
+    string dir = hashedString.substr(0, 2);
+    string treeName = hashedString.substr(2);
+    if (!filesystem::exists(".jit/objects/" + dir))
+        filesystem::create_directory(".jit/objects/" + dir);
+    ofstream treeFileStream(".jit/objects/" + dir + "/" + treeName, ios::binary);
+    treeFileStream.write(reinterpret_cast<char *>(compressed.data()), compressed.size());
+    treeFileStream.close();
+
+    string name = directory.substr(directory.rfind("\\") + 1);
+    if (directory == ".")
+        name = ".";
+    string res = "tree\t\t" + hashedString + "\t\t" + name + "\n";
+    return res;
+}
+
+string createCommit(string lastCommitHash, string rootTreeHash, string message) {
+    string commitString = "";
+    commitString += "\ntree\t\t" + rootTreeHash + "\n";
+    if (lastCommitHash != "")
+        commitString += "parent\t\t" + lastCommitHash + "\n";
+    char username[UNLEN+1];
+    DWORD username_len = UNLEN+1;
+    GetUserName(username, &username_len);
+    string user = username;
+    commitString += "author\t\t" + user + "\n";
+    commitString += "\n" + message + "\n";
+
+    int len = commitString.size();
+    string commit = "commit " + to_string(len) + '\0' + commitString;
+    hash<string> hash;
+    string hashedString = to_string(hash(commit));
+    vector<unsigned char> compressed = zlibCompress(commit);
+    string dir = hashedString.substr(0, 2);
+    string commitFile = hashedString.substr(2);
+    if (!filesystem::exists(".jit/objects/" + dir))
+        filesystem::create_directory(".jit/objects/" + dir);
+    ofstream commitStream(".jit/objects/" + dir + "/" + commitFile, ios::binary);
+    commitStream.write(reinterpret_cast<const char *>(compressed.data()), compressed.size());
+    commitStream.close();
+
+    return hashedString;
 }
 
 void commit(string message) {
+    string treeFile = createTree(".");
+    int fstTab = treeFile.find("\t\t");
+    int sndTab = treeFile.rfind("\t\t");
+    string hash = treeFile.substr(fstTab + 2, sndTab - (fstTab + 2));
 
+    string head = getHead();
+    fstream branch(".jit/refs/branches/" + head, ios::in | ios::out);
+    string lastCommitHash;
+    branch >> lastCommitHash;
+    branch.close();
+
+    string commitHash = createCommit(lastCommitHash, hash, message);
+    ofstream commitFile(".jit/refs/branches/" + head, ios::trunc);
+    commitFile << commitHash;
+    commitFile.close();
+}
+
+void showLog() {
+    string head = getHead();
+    string recentCommit;
+    ifstream branch(".jit/refs/branches/" + head, ios::in);
+    branch >> recentCommit;
+    branch.close();
+    if (recentCommit == "") {
+        cout << "fatal: your current branch does not have any commits yet.\n";
+        return;
+    }
+    while (true) {
+        cout << "------------------------------------";
+        string commitContent = readObject("-p", recentCommit);
+        if (commitContent.find("parent") == string::npos)
+            break;
+        string parent = commitContent.substr(commitContent.find("parent") + 6);
+        parent = parent.substr(parent.find("\t\t") + 2);
+        parent = parent.substr(0, parent.find("\n"));
+        recentCommit = parent;
+    }
 }
 
 string getHead() {

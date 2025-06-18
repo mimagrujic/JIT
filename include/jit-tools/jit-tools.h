@@ -12,6 +12,8 @@
 #include <functional>
 #include <utility>
 #include <zlib.h>
+#include <windows.h>
+#include <Lmcons.h>
 #include "../json/json.hpp"
 
 using namespace std;
@@ -32,7 +34,10 @@ string getHead();
 void commit(string message);
 vector<unsigned char> zlibCompress(const string &data);
 string decompressZlib(const vector<unsigned char> &compressed);
-void readObject(string option, string hash);
+string readObject(string option, string hash);
 string createABlob(string currHead, string fileName);
+string createTree(string directory);
+string createCommit(string lastCommitHash, string rootTreeHash, string message);
+void showLog();
 
 #endif //JIT_TOOLS_H
