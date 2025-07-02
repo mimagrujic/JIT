@@ -74,7 +74,7 @@ void commandHandling(const vector<string> &commandArgs, string &pathToJitRepo) {
             commit(message);
         }
         if (commandArgs[1] == "cat-file" && (commandArgs[2] == "-t" || commandArgs[2] == "-p"))
-            readObject(commandArgs[2], commandArgs[3]);
+            cout << readObject(commandArgs[2], commandArgs[3]) << "\n";
         if (commandArgs[1] == "log")
             showLog();
     }
@@ -139,7 +139,6 @@ string createABlob(string currHead, string fileName) {
     fileDataBuffer << dataIN.rdbuf();
     dataIN.close();
     string blobString = "";
-    string name = fileName.substr(fileName.rfind("\\") + 1);
     string res;
 
     if (indexJSON[currHead].contains(fileName)) {
@@ -157,9 +156,9 @@ string createABlob(string currHead, string fileName) {
 
             indexJSON[currHead][fileName] = hashedString;
             cout << "ADDED:    " << fileName << "\n";
-            res = "blob\t\t" + hashedString + "\t\t" + name + "\n";
+            res = "blob\t\t" + hashedString + "\t\t" + fileName + "\n";
         } else {
-            res = "blob\t\t" + hashedString + "\t\t" + name + "\n";
+            res = "blob\t\t" + hashedString + "\t\t" + fileName + "\n";
             return res;
         }
     } else {
@@ -175,7 +174,7 @@ string createABlob(string currHead, string fileName) {
 
         indexJSON[currHead][fileName] = hashedString;
         cout << "ADDED:    " << fileName << "\n";
-        res = "blob\t\t" + hashedString + "\t\t" + name + "\n";
+        res = "blob\t\t" + hashedString + "\t\t" + fileName + "\n";
     }
 
     return res;
@@ -270,11 +269,9 @@ string readObject(string option, string hash) {
     if (option == "-t") {
         int fstSpace = decompressed.find(" ");
         resString = decompressed.substr(0, fstSpace);
-        cout << resString << "\n";
     } else {
         int nul = decompressed.find('\0');
         resString = decompressed.substr(nul + 1);
-        cout << resString << "\n";
     }
 
     return resString;
@@ -305,10 +302,7 @@ string createTree(string directory) {
     treeFileStream.write(reinterpret_cast<char *>(compressed.data()), compressed.size());
     treeFileStream.close();
 
-    string name = directory.substr(directory.rfind("\\") + 1);
-    if (directory == ".")
-        name = ".";
-    string res = "tree\t\t" + hashedString + "\t\t" + name + "\n";
+    string res = "tree\t\t" + hashedString + "\t\t" + directory + "\n";
     return res;
 }
 
@@ -377,6 +371,7 @@ void showLog() {
     while (true) {
         cout << "------------------------------------";
         string commitContent = readObject("-p", recentCommit);
+        cout << commitContent << "\n";
         if (commitContent.find("parent") == string::npos)
             break;
         string parent = commitContent.substr(commitContent.find("parent") + 6);
@@ -427,11 +422,104 @@ void createNewBranch(string &pathToJitRepo, const string &name) {
     branch.close();
 }
 
+void initializeMap(unordered_map<string, string> &map, string treeHash, string filePath) {
+    vector<string> objects;
+    stringstream ss(readObject("-p", treeHash));
+    string token;
+    while (getline(ss, token, '\n'))
+        objects.push_back(token);
+    for (string s : objects) {
+        int fst = s.find("\t\t");
+        int snd = s.rfind("\t\t");
+        string type = s.substr(0, fst);
+        string name = s.substr(snd + 2);
+        string hash = s.substr(fst + 2, snd - fst - 2);
+        map[name] = hash;
+        if (type == "tree")
+            initializeMap(map, hash, name + "/");
+    }
+}
+
+void restoreFileContent(string previousBranch, string currBranch) {
+    fstream previous(".jit/refs/branches/" + previousBranch, ios::in);
+    string previousHash;
+    previous >> previousHash;
+    previous.close();
+    fstream current(".jit/refs/branches/" + currBranch, ios::in);
+    string currentHash;
+    current >> currentHash;
+    current.close();
+    if (previousBranch == currBranch) {
+        cout << "Already on branch " << currBranch << "\n";
+        return;
+    }
+    if (previousHash == currentHash)
+        return;
+
+    string previousTreeHash = readObject("-p", previousHash);
+    size_t start = previousTreeHash.find("tree\t\t");
+    size_t end = previousTreeHash.find("\n", start);
+    previousTreeHash = previousTreeHash.substr(start + 6, end - start - 6);
+    string currentTreeHash = readObject("-p", currentHash);
+    start = currentTreeHash.find("tree\t\t");
+    end = currentTreeHash.find("\n", start);
+    currentTreeHash = currentTreeHash.substr(start + 6, end - start - 6);
+
+    unordered_map<string, string> previousTreeMap;
+    initializeMap(previousTreeMap, previousTreeHash, "");
+    unordered_map<string, string> currentTreeMap;
+    initializeMap(currentTreeMap, currentTreeHash, "");
+
+
+    for (auto it = currentTreeMap.begin(); it != currentTreeMap.end();) {
+        if (previousTreeMap.find(it->first) != previousTreeMap.end()) {
+            if (previousTreeMap[it->first] == it->second || filesystem::is_directory(it->first)) {
+                previousTreeMap.erase(it->first);
+                it = currentTreeMap.erase(it);
+                continue;
+            }
+            string fileHash = it->second;
+            string name = it->first;
+            string content = readObject("-p", fileHash);
+            ofstream inStream(name, ios::out | ios::trunc);
+            inStream << content;
+            inStream.close();
+            previousTreeMap.erase(it->first);
+            it = currentTreeMap.erase(it);
+        } else {
+            if (!filesystem::is_directory(it->first)) {
+                auto parentPath = filesystem::path(it->first).parent_path();
+                filesystem::create_directories(parentPath);
+
+                string fileHash = it->second;
+                string name = it->first;
+                string content = readObject("-p", fileHash);
+                ofstream inStream(name, ios::out);
+                inStream << content;
+                inStream.close();
+                it = currentTreeMap.erase(it);
+            } else {
+                filesystem::create_directories(it->first);
+                it = currentTreeMap.erase(it);
+            }
+        }
+    }
+
+    for (auto it = previousTreeMap.begin(); it != previousTreeMap.end(); it++) {
+        if (filesystem::is_directory(it->first))
+            filesystem::remove_all(it->first);
+        else
+            filesystem::remove(it->first);
+    }
+}
+
 void switchBranch(string &pathToJitRepo, const string &name) {
+    string previousBranch = getHead();
     fstream head;
     head.open(pathToJitRepo + ".jit/head", fstream::out | fstream::trunc);
     head << "ref: refs/branches/" + name;
     head.close();
+    restoreFileContent(previousBranch, name);
 }
 
 void switchToNewBranch(string &pathToJitRepo, const string &name) {

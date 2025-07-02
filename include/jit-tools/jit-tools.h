@@ -7,7 +7,6 @@
 #include <sstream>
 #include <vector>
 #include <map>
-//#include <sys/stat.h>
 #include <iomanip>
 #include <ctime>
 #include <functional>
@@ -40,5 +39,7 @@ string createABlob(string currHead, string fileName);
 string createTree(string directory);
 string createCommit(string lastCommitHash, string rootTreeHash, string message);
 void showLog();
+void restoreFileContent(string previousBranch, string currBranch);
+void initializeMap(unordered_map<string, string> &map, string treeHash, string filePath);
 
 #endif //JIT_TOOLS_H

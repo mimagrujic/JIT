@@ -1,5 +1,7 @@
 # ninja log v6
-16	927	7712935250375414	CMakeFiles/JIT.dir/main.cpp.obj	ccbd46dfc06045b1
 19	1946	7712935250395416	CMakeFiles/JIT.dir/src/jit-tools/jit-tools.cpp.obj	dacb12b8ea15ee70
+16	927	7712935250375414	CMakeFiles/JIT.dir/main.cpp.obj	ccbd46dfc06045b1
+3	206	7724923448974240	build.ninja	5038ec12be1fbbc9
 1946	2662	7712935269673728	JIT.exe	c6bcbdae5f92cc42
-3	206	7712937021142584	build.ninja	5038ec12be1fbbc9
+40	444	7724923448974240	build.ninja	5038ec12be1fbbc9
+16	1711	7724923449665046	CMakeFiles/JIT.dir/main.cpp.obj	ccbd46dfc06045b1
