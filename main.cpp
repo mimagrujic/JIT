@@ -10,9 +10,6 @@ int main(){
         if (commandLine == "exit" || commandLine == "quit") {
             return 0;
         }
-        if (commandLine == "help") {
-            showHelpDocumentation();
-        }
         if (commandLine.empty()) {
             cout << "jit > ";
             continue;

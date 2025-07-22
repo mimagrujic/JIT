@@ -41,5 +41,10 @@ string createCommit(string lastCommitHash, string rootTreeHash, string message);
 void showLog();
 void restoreFileContent(string previousBranch, string currBranch);
 void initializeMap(unordered_map<string, string> &map, string treeHash, string filePath);
-
+void jitReset(string mode, string where);
+void jitResetWithHash(string mode, string where);
+void jitResetWithNum(string mode, int numOfDeleted);
+void soft(string currentBranch, string where);
+unordered_map<string, string> mixed(string currentBranch, string where);
+void hard(string currentBranch, string where);
 #endif //JIT_TOOLS_H

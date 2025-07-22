@@ -12,9 +12,9 @@ void showHelpDocumentation() {
      << "commiting:\n"
      << "\tjit commit <message>\n"
      << "reset optons:\n"
-     << "\tjit soft <head~1 | hash of parent>\n"
-     << "\tjit medium <head~1 | hash of parent>\n"
-     << "\tjit hard <head~1 | hash of parent>\n"
+     << "\tjit soft <head~n | hash of commit>\n"
+     << "\tjit mixed <head~n | hash of commit>\n"
+     << "\tjit hard <head~n | hash of commit>\n"
      << "showing log:\n"
      << "\tjit log\n"
      << "creating a branch:\n"
@@ -29,16 +29,12 @@ void showHelpDocumentation() {
     << "\tjit delete -b <name>\n"
      << "create + switch to branch:\n"
      << "\tjit goto new <name>\n"
-    << "\tcheck the object type:\n"
-     << "jit cat-file -t <hash>\n"
-    << "\tcheck the object's content:\n"
-    << "jit cat-file -p <hash>\n"
+    << "check the object type:\n"
+     << "\tjit cat-file -t <hash>\n"
+    << "check the object's content:\n"
+    << "\tjit cat-file -p <hash>\n"
      << "unstaged changes:\n"
      << "\tjit status\n"
-     << "merge:\n"
-     << "\tjit merge <branch name>\n"
-     << "cloning:\n"
-     << "\tjit clone <path to repo>\n\n"
      << "--------------------------------------------------\n\n";
 }
 
@@ -47,36 +43,66 @@ void commandHandling(const vector<string> &commandArgs, string &pathToJitRepo) {
         cout << "Unknown command. Did you mean 'jit' ?\n";
     }
     else {
-        if (commandArgs[1] == "init")
-            pathToJitRepo = initializeRepository(commandArgs);
-        if (commandArgs[1] == "add")
-            stageAllChanges();
-        if (commandArgs[1] == "branch")
-            createNewBranch(pathToJitRepo, commandArgs[2]);
-        if (commandArgs[1] == "goto" && commandArgs[2] != "new")
-            switchBranch(pathToJitRepo, commandArgs[2]);
-        if (commandArgs[1] == "goto" && commandArgs[2] == "new")
-            switchToNewBranch(pathToJitRepo, commandArgs[3]);
-        if (commandArgs[1] == "current")
-            showCurrentBranch();
-        if (commandArgs[1] == "branches")
-            listAllBranches(pathToJitRepo);
-        if (commandArgs[1] == "delete" && commandArgs[2] == "-b")
-            deleteBranch(pathToJitRepo, commandArgs[3]);
-        if (commandArgs[1] == "status")
-            jitStatus();
-        if (commandArgs[1] == "commit") {
-            string message = "";
-            int numOfWords = commandArgs.size();
-            for (int i = 2; i < numOfWords; i++) {
-                message += commandArgs[i] + " ";
+        try {
+            if (commandArgs[1] == "help")
+                showHelpDocumentation();
+            else if (commandArgs[1] == "init")
+                pathToJitRepo = initializeRepository(commandArgs);
+            else if (commandArgs[1] == "add")
+                stageAllChanges();
+            else if (commandArgs[1] == "branch") {
+                if (commandArgs.size() < 3)
+                    throw invalid_argument("Invalid arguments. Try \'jit help\' for more.\n");
+                createNewBranch(pathToJitRepo, commandArgs[2]);
             }
-            commit(message);
+            else if (commandArgs[1] == "goto" && commandArgs[2] != "new") {
+                if (commandArgs.size() < 3)
+                    throw invalid_argument("Invalid arguments. Try \'jit help\' for more.\n");
+                switchBranch(pathToJitRepo, commandArgs[2]);
+            }
+            else if (commandArgs[1] == "goto" && commandArgs[2] == "new") {
+                if (commandArgs.size() < 4)
+                    throw invalid_argument("Invalid arguments. Try \'jit help\' for more.\n");
+                switchToNewBranch(pathToJitRepo, commandArgs[3]);
+            }
+            else if (commandArgs[1] == "current")
+                showCurrentBranch();
+            else if (commandArgs[1] == "branches")
+                listAllBranches(pathToJitRepo);
+            else if (commandArgs[1] == "delete" && commandArgs[2] == "-b") {
+                if (commandArgs.size() < 4)
+                    throw invalid_argument("Invalid arguments. Try \'jit help\' for more.\n");
+                deleteBranch(pathToJitRepo, commandArgs[3]);
+            }
+            else if (commandArgs[1] == "status")
+                jitStatus();
+            else if (commandArgs[1] == "commit") {
+                string message = "";
+                int numOfWords = commandArgs.size();
+                for (int i = 2; i < numOfWords; i++) {
+                    message += commandArgs[i] + " ";
+                }
+                commit(message);
+            }
+            else if (commandArgs[1] == "cat-file" && (commandArgs[2] == "-t" || commandArgs[2] == "-p")) {
+                if (commandArgs.size() < 4)
+                    throw invalid_argument("Invalid arguments. Try \'jit help\' for more.\n");
+                cout << readObject(commandArgs[2], commandArgs[3]) << "\n";
+            }
+            else if (commandArgs[1] == "log")
+                showLog();
+            else if (commandArgs[1] == "soft" || commandArgs[1] == "mixed" || commandArgs[1] == "hard") {
+                if (commandArgs.size() < 3)
+                    throw invalid_argument("Invalid arguments. Try \'jit help\' for more.\n");
+                jitReset(commandArgs[1], commandArgs[2]);
+            }
+            else
+                throw invalid_argument("Unknown command : " + commandArgs[1] + "\n");
+
+        } catch (exception &e) {
+            cout << e.what();
         }
-        if (commandArgs[1] == "cat-file" && (commandArgs[2] == "-t" || commandArgs[2] == "-p"))
-            cout << readObject(commandArgs[2], commandArgs[3]) << "\n";
-        if (commandArgs[1] == "log")
-            showLog();
+
     }
 }
 
@@ -150,10 +176,11 @@ string createABlob(string currHead, string fileName) {
             string blobName = hashedString.substr(2);
             if (!filesystem::exists(".jit/objects/" + dir))
                 filesystem::create_directory(".jit/objects/" + dir);
-            ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
-            blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
-            blobFile.close();
-
+            if (!filesystem::exists(".jit/objects/" + dir + "/" + blobName)) {
+                ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
+                blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
+                blobFile.close();
+            }
             indexJSON[currHead][fileName] = hashedString;
             cout << "ADDED:    " << fileName << "\n";
             res = "blob\t\t" + hashedString + "\t\t" + fileName + "\n";
@@ -167,11 +194,13 @@ string createABlob(string currHead, string fileName) {
         vector<unsigned char> compressed = zlibCompress(blobString);
         string dir = hashedString.substr(0, 2);
         string blobName = hashedString.substr(2);
-        filesystem::create_directory(".jit/objects/" + dir);
-        ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
-        blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
-        blobFile.close();
-
+        if (!filesystem::exists(".jit/objects/" + dir))
+            filesystem::create_directory(".jit/objects/" + dir);
+        if (!filesystem::exists(".jit/objects/" + dir + "/" + blobName)) {
+            ofstream blobFile(".jit/objects/" + dir + "/" + blobName, ios::binary);
+            blobFile.write(reinterpret_cast<char*>(compressed.data()), compressed.size());
+            blobFile.close();
+        }
         indexJSON[currHead][fileName] = hashedString;
         cout << "ADDED:    " << fileName << "\n";
         res = "blob\t\t" + hashedString + "\t\t" + fileName + "\n";
@@ -298,10 +327,11 @@ string createTree(string directory) {
     string treeName = hashedString.substr(2);
     if (!filesystem::exists(".jit/objects/" + dir))
         filesystem::create_directory(".jit/objects/" + dir);
-    ofstream treeFileStream(".jit/objects/" + dir + "/" + treeName, ios::binary);
-    treeFileStream.write(reinterpret_cast<char *>(compressed.data()), compressed.size());
-    treeFileStream.close();
-
+    if (!filesystem::exists(".jit/objects/" + dir + "/" + treeName)) {
+        ofstream treeFileStream(".jit/objects/" + dir + "/" + treeName, ios::binary);
+        treeFileStream.write(reinterpret_cast<char *>(compressed.data()), compressed.size());
+        treeFileStream.close();
+    }
     string res = "tree\t\t" + hashedString + "\t\t" + directory + "\n";
     return res;
 }
@@ -333,10 +363,11 @@ string createCommit(string lastCommitHash, string rootTreeHash, string message) 
     string commitFile = hashedString.substr(2);
     if (!filesystem::exists(".jit/objects/" + dir))
         filesystem::create_directory(".jit/objects/" + dir);
-    ofstream commitStream(".jit/objects/" + dir + "/" + commitFile, ios::binary);
-    commitStream.write(reinterpret_cast<const char *>(compressed.data()), compressed.size());
-    commitStream.close();
-
+    if (!filesystem::exists(".jit/objects/" + dir + "/" + commitFile)) {
+        ofstream commitStream(".jit/objects/" + dir + "/" + commitFile, ios::binary);
+        commitStream.write(reinterpret_cast<const char *>(compressed.data()), compressed.size());
+        commitStream.close();
+    }
     return hashedString;
 }
 
@@ -396,7 +427,6 @@ string getHead() {
     head.close();
     return currHead;
 }
-
 
 void createNewBranch(string &pathToJitRepo, const string &name) {
     fstream branch;
@@ -564,4 +594,141 @@ void deleteBranch(string &pathToJitRepo, const string &name) {
     ofstream indexOUT(pathToJitRepo + ".jit/index.json");
     indexOUT << indexJSON.dump(4);
     indexOUT.close();
+}
+
+void jitReset(string mode, string where) {
+    if (where.find("HEAD~") == string::npos)
+        jitResetWithHash(mode, where);
+    else
+        jitResetWithNum(mode, stoi(where.substr(where.find('~') + 1)));
+}
+
+void soft(string currentBranch, string where) {
+    ofstream branchOut(".jit/refs/branches/" + currentBranch, ios::trunc);
+    branchOut << where;
+    branchOut.close();
+}
+
+unordered_map<string, string> mixed(string currentBranch, string where) {
+    soft(currentBranch, where);
+    ifstream indexIN(".jit/index.json");
+    indexIN >> indexJSON;
+    indexJSON[currentBranch].clear();
+    indexIN.close();
+
+    unordered_map<string, string> map;
+    string whereContent = readObject("-p", where);
+    string treeHash = whereContent.substr(whereContent.find("tree") + 4);
+    treeHash = treeHash.substr(treeHash.find("\t\t") + 2);
+    treeHash = treeHash.substr(0, treeHash.find("\n"));
+    initializeMap(map, treeHash, "");
+    for (auto &[path, hash] : map)
+        indexJSON[currentBranch][path] = hash;
+
+    ofstream indexOUT(".jit/index.json");
+    indexOUT << indexJSON.dump(4);
+    indexOUT.close();
+
+    return map;
+}
+
+void hard(string currentBranch, string where) {
+    unordered_map<string, string> map = mixed(currentBranch, where);
+    for (auto el : map)
+        cout << el.first << " " << el.second << "\n";
+    vector<filesystem::path> forRemoval;
+    for (auto i = filesystem::recursive_directory_iterator("."); i != filesystem::recursive_directory_iterator();) {
+        if (i->path().filename() == ".jit" || i->path().filename() == "a.exe") {
+            i.disable_recursion_pending();
+            i++;
+            continue;
+        } else {
+            if (map.find(i->path().string()) != map.end()) {
+                string details = (filesystem::is_directory(i->path()) ? createTree(i->path().string()) : createABlob(currentBranch, i->path().string()));
+                stringstream ss(details);
+                string type, hash, name;
+                ss >> type >> hash >> name;
+                if (type == "tree") {
+                    i++;
+                    continue;
+                }
+                if (map[i->path().string()] == hash) {
+                    i++;
+                    continue;
+                }
+                string fileContent = readObject("-p", map[i->path().string()]);
+                ofstream writeIn(i->path(), ios::trunc);
+                writeIn << fileContent;
+                writeIn.close();
+                i++;
+                continue;
+            }
+            if (filesystem::is_directory(i->path())){
+                i.disable_recursion_pending();
+                forRemoval.push_back(i->path());
+                i++;
+                continue;
+            }
+            forRemoval.push_back(i->path());
+            i++;
+        }
+    }
+
+    for (auto &path : forRemoval) {
+        if (filesystem::is_directory(path))
+            filesystem::remove_all(path);
+        else
+            filesystem::remove(path);
+    }
+
+    for (auto [path, hash] : map) {
+        if (!filesystem::exists(path)) {
+            if (filesystem::is_directory(path)) {
+                filesystem::create_directories(path);
+            } else {
+                filesystem::path p = path;
+                filesystem::create_directories(p.parent_path());
+                string content = readObject("-p", hash);
+                ofstream writeIn(path, ios::out);
+                writeIn << content;
+                writeIn.close();
+            }
+        }
+    }
+}
+
+void jitResetWithHash(string mode, string where) {
+    string head = getHead();
+    if (mode == "soft") {
+        soft(head, where);
+    } else if (mode == "mixed") {
+        mixed(head, where);
+    } else {
+        hard(head, where);
+    }
+}
+
+void jitResetWithNum(string mode, int numOfDeleted) {
+    string head = getHead();
+    string recentCommit;
+    ifstream branch(".jit/refs/branches/" + head, ios::in);
+    branch >> recentCommit;
+    branch.close();
+    if (recentCommit == "") {
+        cout << "fatal: No commits for deletion.\n";
+        return;
+    }
+    while (numOfDeleted) {
+        string commitContent = readObject("-p", recentCommit);
+        if (commitContent.find("parent") == string::npos && numOfDeleted) {
+            cout << "fatal: Not enough commits for deletion.\n";
+            return;
+        }
+        string parent = commitContent.substr(commitContent.find("parent") + 6);
+        parent = parent.substr(parent.find("\t\t") + 2);
+        parent = parent.substr(0, parent.find("\n"));
+        recentCommit = parent;
+        numOfDeleted--;
+    }
+    jitResetWithHash(mode, recentCommit);
 }
