@@ -29,6 +29,7 @@ Jit is a simplified version of Git written in C++.
 ## 💻 Usage / Command reference
 | Command                                      | Description                                      |
 |----------------------------------------------|--------------------------------------------------|
+| `jit help`                                   | Prints documentation with available commands    |
 | `jit init`                                   | Initializes a new repository                    |
 | `jit status`                                 | Shows the current status of the working tree    |
 | `jit add <file>` or `jit add .`              | Stages a file or all files in the directory     |
