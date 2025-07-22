@@ -15,9 +15,9 @@ Jit is a simplified version of Git written in C++.
       - Switching between branches
       - Deleting a branch
       - Listing current/all branches
-  - Reset
+  - Resetting
       - Implementation of all 3 reset options: `soft`, `mixed` and `hard`
-  - Log
+  - Accessing commit history
   - Object type/content check:
       - Implementation of `git cat-file -t/-p <hash>` function
 ## 📦 Setup instructions
