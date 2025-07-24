@@ -1,6 +1,6 @@
-# 🛠️ Jit - Simplified Git
+# 🛠️ Jit - Git-Inspired Version Control System
 
-Jit is a simplified version of Git written in C++. 
+Jit is a Git-inspired version control system written in C++. 
 
 ## 🚀 Features
   - Repository initialization
